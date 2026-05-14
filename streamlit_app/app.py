@@ -23,7 +23,7 @@ warnings.filterwarnings("ignore")
 # KONFIGURASI HALAMAN
 # ════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="Klasifikasi Emosi Wajah - Kelompok 1 Kelas A",
+    page_title="Raut Muka - Klasifikasi Emosi Wajah - Kelompok 1 Kelas A",
     page_icon="😊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -375,7 +375,7 @@ with st.sidebar:
 # ════════════════════════════════════════════════════════════════
 # HALAMAN UTAMA
 # ════════════════════════════════════════════════════════════════
-st.markdown("# Klasifikasi Emosi Wajah - Kelompok 1 Kelas A")
+st.markdown("# Raut Muka - Klasifikasi Emosi Wajah - Kelompok 1 Kelas A")
 st.markdown(
     "Upload foto wajah → sistem mengekstrak fitur tekstur **GLCM** "
     "→ **Logistic Regression** memprediksi emosi."
