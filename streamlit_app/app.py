@@ -23,7 +23,7 @@ warnings.filterwarnings("ignore")
 # KONFIGURASI HALAMAN
 # ════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="Klasifikasi Emosi Wajah",
+    page_title="Klasifikasi Emosi Wajah - Kelompok 1 Kelas A",
     page_icon="😊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -152,7 +152,7 @@ def detect_and_crop_face(pil_image: Image.Image) -> tuple[Image.Image, str]:
 
     if len(faces) == 0:
         # Tidak ada wajah terdeteksi → gunakan gambar asli
-        return pil_image, "⚠️ Wajah tidak terdeteksi — menggunakan gambar penuh"
+        return pil_image, "Wajah tidak terdeteksi — menggunakan gambar penuh"
 
     # Pilih wajah terbesar (area w×h terbesar)
     x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
@@ -169,9 +169,9 @@ def detect_and_crop_face(pil_image: Image.Image) -> tuple[Image.Image, str]:
     cropped = pil_image.crop((x1, y1, x2, y2))
     n_faces = len(faces)
     msg = (
-        f"✅ {n_faces} wajah terdeteksi — crop wajah terbesar ({w}×{h} px)"
+        f" {n_faces} wajah terdeteksi — crop wajah terbesar ({w}×{h} px)"
         if n_faces == 1 else
-        f"✅ {n_faces} wajah terdeteksi — crop wajah terbesar ({w}×{h} px)"
+        f" {n_faces} wajah terdeteksi — crop wajah terbesar ({w}×{h} px)"
     )
     return cropped, msg
 
@@ -182,7 +182,7 @@ def preprocess_image(pil_image: Image.Image, img_size=(48, 48)) -> tuple:
 
     Tahapan:
         1. Konversi ke Grayscale ('L')
-        2. Resize ke 48×48 dengan LANCZOS (kualitas terbaik)
+        2. Resize ke 48x48 dengan LANCZOS (kualitas terbaik)
         3. Simpan array uint8 (untuk ditampilkan)
         4. Normalisasi /255.0 → float32 [0,1]
 
@@ -205,7 +205,7 @@ def preprocess_image(pil_image: Image.Image, img_size=(48, 48)) -> tuple:
 def quantize_image(img_norm: np.ndarray, levels: int) -> np.ndarray:
     """
     Kuantisasi float [0,1] → integer [0, levels-1].
-    Rumus: level = ⌊pixel_norm × levels⌋  (di-clip agar tidak overflow)
+    Rumus: level = ⌊pixel_norm x levels⌋  (di-clip agar tidak overflow)
 
     HARUS sama persis dengan fungsi di notebook.
     """
@@ -324,10 +324,10 @@ ANGLE_LABELS = ["0°", "45°", "90°", "135°"]
 # SIDEBAR
 # ════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("## ⚙️ Pengaturan")
+    st.markdown("## Pengaturan")
 
     if not BUNDLE_PATH.exists():
-        st.error("❌ `model_bundle.pkl` tidak ditemukan!\n\n"
+        st.error(" `model_bundle.pkl` tidak ditemukan!\n\n"
                  "Jalankan CELL 6.0 di notebook untuk menghasilkan file ini.")
         st.stop()
 
@@ -335,9 +335,9 @@ with st.sidebar:
     meta   = bundle["metadata"]
     cfg    = bundle["config"]
 
-    st.success("✅ Model berhasil dimuat")
+    st.success(" Model berhasil dimuat")
 
-    st.markdown("### 📊 Info Model")
+    st.markdown("### Info Model")
     st.markdown(f"""
 | Parameter | Nilai |
 |:----------|------:|
@@ -349,18 +349,18 @@ with st.sidebar:
 | Kelas | `{len(meta['classes'])}` |
     """)
 
-    st.markdown("### 🎯 Kelas yang Didukung")
+    st.markdown("### Kelas yang Didukung")
     for cls in meta["classes"]:
         em = EMOTION_META.get(cls, {}).get("emoji", "🔹")
         st.markdown(f"- {em} **{cls.capitalize()}**")
 
     st.markdown("---")
-    st.markdown("### 📐 Spesifikasi Preprocessing")
+    st.markdown("### Spesifikasi Preprocessing")
     st.markdown(f"""
 <div class="step-box">① Face Detection (Haar Cascade)</div>
 <div class="step-box">② Center Crop + Padding 10%</div>
 <div class="step-box">③ Grayscale (mode 'L')</div>
-<div class="step-box">④ Resize → <b>48 × 48</b> (LANCZOS)</div>
+<div class="step-box">④ Resize → <b>48 x 48</b> (LANCZOS)</div>
 <div class="step-box">⑤ Normalisasi → <b>÷ 255.0</b> (float32)</div>
 <div class="step-box">⑥ Kuantisasi → <b>{cfg['levels']} level</b></div>
 <div class="step-box">⑦ GLCM (d=1, 4 sudut)</div>
@@ -375,7 +375,7 @@ with st.sidebar:
 # ════════════════════════════════════════════════════════════════
 # HALAMAN UTAMA
 # ════════════════════════════════════════════════════════════════
-st.markdown("# 😊 Klasifikasi Emosi Wajah")
+st.markdown("# Klasifikasi Emosi Wajah - Kelompok 1 Kelas A")
 st.markdown(
     "Upload foto wajah → sistem mengekstrak fitur tekstur **GLCM** "
     "→ **Logistic Regression** memprediksi emosi."
@@ -386,7 +386,7 @@ st.markdown("---")
 col_upload, col_result = st.columns([1, 1.6], gap="large")
 
 with col_upload:
-    st.markdown("### 📤 Upload Gambar")
+    st.markdown("### Upload Gambar")
     uploaded = st.file_uploader(
         "Pilih file gambar (JPG / PNG / BMP / WEBP)",
         type=["jpg", "jpeg", "png", "bmp", "webp"],
@@ -397,7 +397,7 @@ with col_upload:
     use_demo = False
     if not uploaded:
         st.markdown("*atau coba dengan gambar sintetis:*")
-        use_demo = st.button("🎲 Gunakan Gambar Demo (Sintetis)", use_container_width=True)
+        use_demo = st.button("Gunakan Gambar Demo (Sintetis)", use_container_width=True)
 
     if uploaded or use_demo:
         # ── Load gambar ──────────────────────────────────────────
@@ -459,7 +459,7 @@ with col_upload:
             )
 
         # ── Prediksi ─────────────────────────────────────────────
-        with st.spinner("🔍 Mengekstrak fitur GLCM & memprediksi..."):
+        with st.spinner("Mengekstrak fitur GLCM & memprediksi..."):
             result = predict(img_norm, bundle)
 
         # Simpan ke session state agar kolom kanan bisa mengakses
@@ -472,7 +472,7 @@ with col_upload:
 # ── Kolom Hasil ───────────────────────────────────────────────────
 with col_result:
     if "result" not in st.session_state:
-        st.info("⬅️ Upload gambar untuk melihat hasil prediksi.")
+        st.info("Upload gambar untuk melihat hasil prediksi.")
     else:
         result   = st.session_state["result"]
         img_norm = st.session_state["img_norm"]
@@ -482,7 +482,7 @@ with col_result:
         em_meta  = EMOTION_META.get(pred_cls, {"emoji":"🔹","color":"#555","label":pred_cls})
 
         # ── Hasil Utama ──────────────────────────────────────────
-        st.markdown("### 🎯 Hasil Prediksi")
+        st.markdown("### Hasil Prediksi")
         conf = result["confidence"]
 
         col_badge, col_conf = st.columns([1, 1])
@@ -514,7 +514,7 @@ with col_result:
         st.markdown("---")
 
         # ── Distribusi Probabilitas ───────────────────────────────
-        st.markdown("### 📊 Distribusi Probabilitas Semua Kelas")
+        st.markdown("### Distribusi Probabilitas Semua Kelas")
         probs = result["probabilities"]
 
         # Urutkan dari tertinggi
@@ -546,7 +546,7 @@ with col_result:
         st.markdown("---")
 
         # ── Fitur GLCM yang Diekstrak ────────────────────────────
-        st.markdown("### 🔬 Fitur GLCM yang Diekstrak")
+        st.markdown("### Fitur GLCM yang Diekstrak")
 
         feat_raw    = result["feature_raw"]
         feat_scaled = result["feature_scaled"]
@@ -579,7 +579,7 @@ with col_result:
                     )
         else:
             # 16 fitur — tampilkan sebagai tabel
-            st.markdown("**Agregasi: Concat (4 sudut × 4 fitur = 16 nilai)**")
+            st.markdown("**Agregasi: Concat (4 sudut x 4 fitur = 16 nilai)**")
             rows = []
             for p_idx, prop in enumerate(glcm_props):
                 for a_idx, ang in enumerate(ANGLE_LABELS):
@@ -596,7 +596,7 @@ with col_result:
         st.markdown("---")
 
         # ── Detail Pipeline (expandable) ────────────────────────
-        with st.expander("🔧 Detail Pipeline Preprocessing & GLCM", expanded=False):
+        with st.expander("Detail Pipeline Preprocessing & GLCM", expanded=False):
             img_q = quantize_image(img_norm, cfg_["levels"])
             glcm_4d = result["glcm_4d"]
 
@@ -612,12 +612,12 @@ with col_result:
 2. **Normalisasi** → `÷ 255.0`  
    → Range: `[{img_norm.min():.4f}, {img_norm.max():.4f}]`
 
-3. **Kuantisasi** → `⌊pixel × {cfg_['levels']}⌋`  
+3. **Kuantisasi** → `⌊pixel x {cfg_['levels']}⌋`  
    → Range: `[0, {cfg_['levels']-1}]`  
    → Distribusi level: `{np.unique(img_q).tolist()[:8]}{'...' if len(np.unique(img_q))>8 else ''}`
 
 4. **GLCM** → `graycomatrix(d=1, angles=[0°,45°,90°,135°], L={cfg_['levels']})`  
-   → Shape GLCM: `{glcm_4d.shape}` (L×L×1×4 sudut)
+   → Shape GLCM: `{glcm_4d.shape}` (LxLx1x4 sudut)
 
 5. **Fitur** → `{cfg_['aggregation']}` → `{len(feat_raw)}D vector`
 
@@ -656,7 +656,7 @@ with col_result:
 
         # ── Perbandingan Nilai Fitur per Sudut (concat) ──────────
         if aggregation == "concat":
-            with st.expander("📐 Nilai Fitur per Sudut", expanded=False):
+            with st.expander("Nilai Fitur per Sudut", expanded=False):
                 try:
                     import matplotlib.pyplot as plt
                     import matplotlib
@@ -697,6 +697,6 @@ with col_result:
 st.markdown("---")
 st.markdown(
     "<small>Model: Logistic Regression + GLCM | Dataset: FER2013 | "
-    "Preprocessing: Grayscale 48×48 + Normalisasi + Kuantisasi</small>",
+    "Preprocessing: Grayscale 48x48 + Normalisasi + Kuantisasi</small>",
     unsafe_allow_html=True,
 )
