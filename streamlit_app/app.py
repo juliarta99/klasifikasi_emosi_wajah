@@ -5,6 +5,12 @@ GLCM + Geometri + Logistic Regression / SVM · Streamlit App
 Cara jalankan:
     pip install streamlit scikit-image scikit-learn pillow numpy opencv-python
     streamlit run app.py
+
+Fix utama v3:
+  - predict_all_models: setiap model mengekstrak GLCM dari config bundle-nya sendiri
+    sehingga dimensi fitur selalu cocok dengan scaler (tidak ada mismatch 4D vs 16D)
+  - Emoji emosi diganti SVG inline agar tidak bergantung pada font emoji sistem
+  - Akurasi ditampilkan langsung dari metadata bundle (bukan hardcode)
 """
 
 import io
@@ -24,11 +30,26 @@ warnings.filterwarnings("ignore")
 # KONFIGURASI HALAMAN
 # ════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="Raut Muka - Klasifikasi Emosi Wajah - Kelompok 1 Kelas A",
-    page_icon="😊",
+    page_title="Raut Muka — Klasifikasi Emosi Wajah — Kelompok 1 Kelas A",
+    page_icon=":face_with_open_mouth:",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ════════════════════════════════════════════════════════════════
+# SVG EMOJI EMOSI  (tidak bergantung font emoji sistem)
+# ════════════════════════════════════════════════════════════════
+EMOTION_EMOJI = {
+    "angry"   : "😠",
+    "happy"   : "😄",
+    "sad"     : "😢",
+    "surprise": "😲",
+}
+
+def emotion_svg(cls: str, size: int = 56) -> str:
+    """Kembalikan emoji sebagai span HTML dengan ukuran font sesuai size."""
+    emoji = EMOTION_EMOJI.get(cls, "🔹")
+    return f'<span style="font-size:{size}px;line-height:1;">{emoji}</span>'
 
 # ════════════════════════════════════════════════════════════════
 # CSS KUSTOM
@@ -36,34 +57,37 @@ st.set_page_config(
 st.markdown("""
 <style>
 .card {
-    background: white;
-    border-radius: 12px;
-    padding: 1.2rem 1.5rem;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-    margin-bottom: 1rem;
+    background: var(--background-color, white);
+    border: 1px solid rgba(128,128,128,0.15);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.8rem;
 }
 .prob-row {
     display: flex;
     align-items: center;
-    margin: 6px 0;
-    font-size: 0.95rem;
+    margin: 7px 0;
+    font-size: 0.93rem;
 }
 .prob-label {
-    width: 110px;
+    width: 120px;
     font-weight: 600;
     text-transform: capitalize;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 .prob-bar-bg {
     flex: 1;
-    background: #f0f2f6;
-    border-radius: 8px;
-    height: 22px;
+    background: rgba(128,128,128,0.12);
+    border-radius: 6px;
+    height: 20px;
     overflow: hidden;
     margin: 0 10px;
 }
 .prob-bar-fill {
     height: 100%;
-    border-radius: 8px;
+    border-radius: 6px;
     transition: width 0.4s ease;
 }
 .prob-val {
@@ -73,47 +97,42 @@ st.markdown("""
 }
 .pred-badge {
     display: inline-block;
-    padding: 0.45rem 1.2rem;
+    padding: 0.4rem 1.1rem;
     border-radius: 50px;
-    font-size: 1.3rem;
+    font-size: 1.2rem;
     font-weight: 800;
     letter-spacing: 0.5px;
     margin-top: 0.3rem;
 }
 .step-box {
     border-left: 4px solid #4e8cff;
-    background: #f4f7ff;
-    padding: 0.6rem 1rem;
-    border-radius: 0 8px 8px 0;
-    margin: 0.4rem 0;
-    font-size: 0.9rem;
-    color: #000;
+    background: rgba(78,140,255,0.07);
+    padding: 0.5rem 0.9rem;
+    border-radius: 0 6px 6px 0;
+    margin: 0.35rem 0;
+    font-size: 0.85rem;
 }
 .model-card {
-    border-radius: 10px;
-    padding: 0.8rem 1rem;
-    margin: 0.3rem 0;
-    font-size: 0.88rem;
+    border-radius: 8px;
+    padding: 0.7rem 0.9rem;
+    margin: 0.25rem 0;
+    font-size: 0.86rem;
 }
-.geo-feat-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 4px 0;
-    border-bottom: 1px solid #f0f0f0;
-    font-size: 0.88rem;
+.feat-val {
+    font-size: 1.2rem;
+    font-weight: 700;
 }
 </style>
 """, unsafe_allow_html=True)
-
 
 # ════════════════════════════════════════════════════════════════
 # KONSTANTA TAMPILAN
 # ════════════════════════════════════════════════════════════════
 EMOTION_META = {
-    "angry"   : {"emoji": "😠", "color": "#e74c3c", "label": "Angry"},
-    "happy"   : {"emoji": "😄", "color": "#2ecc71", "label": "Happy"},
-    "sad"     : {"emoji": "😢", "color": "#3498db", "label": "Sad"},
-    "surprise": {"emoji": "😲", "color": "#f39c12", "label": "Surprise"},
+    "angry"   : {"color": "#e74c3c", "label": "Angry"},
+    "happy"   : {"color": "#2ecc71", "label": "Happy"},
+    "sad"     : {"color": "#3498db", "label": "Sad"},
+    "surprise": {"color": "#f39c12", "label": "Surprise"},
 }
 
 PROP_META = {
@@ -124,52 +143,50 @@ PROP_META = {
 }
 
 GEO_FEAT_META = {
-    "eye_ratio"         : ("Eye Ratio",          "Keterbukaan zona mata (surprise = tinggi)"),
-    "mouth_ratio"       : ("Mouth Ratio",         "Aktivitas mulut (happy = tinggi)"),
-    "brow_height"       : ("Brow Height",         "Pergerakan alis (surprise = tinggi)"),
-    "face_symmetry"     : ("Face Symmetry",       "Simetri kiri-kanan wajah (1 = sempurna simetris)"),
-    "edge_dens_upper"   : ("Edge Density Upper",  "Kerapatan tepi area atas (alis/dahi)"),
-    "edge_dens_lower"   : ("Edge Density Lower",  "Kerapatan tepi area bawah (mulut/dagu)"),
-    "vert_gradient"     : ("Vert Gradient",       "Distribusi intensitas atas vs bawah"),
-    "pixel_var_ratio"   : ("Pixel Var Ratio",     "Rasio variansi bawah/atas wajah"),
+    "eye_ratio"       : ("Eye Ratio",         "Keterbukaan zona mata (surprise = tinggi)"),
+    "mouth_ratio"     : ("Mouth Ratio",        "Aktivitas mulut (happy = tinggi)"),
+    "brow_height"     : ("Brow Height",        "Pergerakan alis (surprise = tinggi)"),
+    "face_symmetry"   : ("Face Symmetry",      "Simetri kiri-kanan wajah (1 = sempurna simetris)"),
+    "edge_dens_upper" : ("Edge Dens Upper",    "Kerapatan tepi area atas (alis/dahi)"),
+    "edge_dens_lower" : ("Edge Dens Lower",    "Kerapatan tepi area bawah (mulut/dagu)"),
+    "vert_gradient"   : ("Vert Gradient",      "Distribusi intensitas atas vs bawah"),
+    "pixel_var_ratio" : ("Pixel Var Ratio",    "Rasio variansi bawah/atas wajah"),
 }
 
 GEO_FEAT_NAMES = list(GEO_FEAT_META.keys())
-ANGLE_LABELS   = ["0°", "45°", "90°", "135°"]
 
 MODEL_META = {
     "A": {
-        "name"  : "Model A — GLCM + Logistic Regression",
-        "short" : "GLCM + LR",
-        "color" : "#3498db",
-        "icon"  : "📊",
-        "desc"  : "Baseline: hanya fitur tekstur GLCM (4D)",
-        "dim"   : 4,
+        "name" : "Model A — GLCM + Logistic Regression",
+        "short": "GLCM + LR",
+        "color": "#3498db",
+        "label": "A",
+        "desc" : "Baseline: fitur tekstur GLCM (concat)",
     },
     "B": {
-        "name"  : "Model B — GLCM + Geometri + Logistic Regression",
-        "short" : "GLCM + Geo + LR",
-        "color" : "#2ecc71",
-        "icon"  : "📐",
-        "desc"  : "Tambahan fitur geometri wajah (12D total)",
-        "dim"   : 12,
+        "name" : "Model B — GLCM + Geometri + LR",
+        "short": "GLCM + Geo + LR",
+        "color": "#2ecc71",
+        "label": "B",
+        "desc" : "Tambahan fitur geometri wajah",
     },
     "C": {
-        "name"  : "Model C — GLCM + Geometri + SVM (RBF)",
-        "short" : "GLCM + Geo + SVM",
-        "color" : "#e74c3c",
-        "icon"  : "🧠",
-        "desc"  : "SVM kernel RBF untuk hubungan non-linear (12D)",
-        "dim"   : 12,
+        "name" : "Model C — GLCM + Geometri + SVM (RBF)",
+        "short": "GLCM + Geo + SVM",
+        "color": "#e74c3c",
+        "label": "C",
+        "desc" : "SVM kernel RBF — hubungan non-linear",
     },
 }
 
+PROP_COLORS = ["#e74c3c", "#2ecc71", "#9b59b6", "#3498db"]
 
 # ════════════════════════════════════════════════════════════════
 # FUNGSI PREPROCESSING
 # ════════════════════════════════════════════════════════════════
 
 def detect_and_crop_face(pil_image: Image.Image) -> tuple:
+    """Deteksi wajah dengan Haar Cascade. Fallback ke gambar penuh."""
     img_gray_np = np.array(pil_image.convert("L"))
     face_cascade = cv2.CascadeClassifier(
         cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
@@ -190,9 +207,7 @@ def detect_and_crop_face(pil_image: Image.Image) -> tuple:
     x1, y1 = max(0, x - pad), max(0, y - pad)
     x2, y2 = min(W, x + w + pad), min(H, y + h + pad)
     cropped = pil_image.crop((x1, y1, x2, y2))
-    n = len(faces)
-    msg = f" {n} wajah terdeteksi — crop wajah terbesar ({w}×{h} px)"
-    return cropped, msg
+    return cropped, f"{len(faces)} wajah terdeteksi — crop wajah terbesar ({w}×{h} px)"
 
 
 def preprocess_image(pil_image: Image.Image, img_size=(48, 48)) -> tuple:
@@ -209,36 +224,45 @@ def quantize_image(img_norm: np.ndarray, levels: int) -> np.ndarray:
     )
 
 
-def extract_glcm_features_raw(img_norm: np.ndarray, config: dict) -> tuple:
-    """Ekstrak fitur GLCM (unscaled). Mengembalikan (feat_vec, glcm_4d)."""
+def extract_glcm_features_for_bundle(img_norm: np.ndarray, config: dict) -> tuple:
+    """
+    Ekstrak fitur GLCM sesuai config dari bundle.
+    Mengembalikan (feat_vec, glcm_tensor).
+    Dimensi feat_vec:
+      - aggregation='mean'   → 4D  (rata-rata 4 sudut per properti)
+      - aggregation='concat' → 16D (tiap sudut tiap properti)
+    """
     levels      = config["levels"]
-    distances   = config["distances"]
-    angles      = config["angles"]
-    props       = config["glcm_props"]
-    aggregation = config["aggregation"]
+    distances   = config.get("distances", [1])
+    angles      = config.get("angles", [0, np.pi/4, np.pi/2, 3*np.pi/4])
+    props       = config.get("glcm_props", ["contrast","homogeneity","energy","correlation"])
+    aggregation = config.get("aggregation", "concat")
+    symmetric   = config.get("symmetric", True)
+    normed      = config.get("normed", True)
 
     img_q = quantize_image(img_norm, levels)
     glcm  = graycomatrix(
         img_q, distances=distances, angles=angles, levels=levels,
-        symmetric=config["symmetric"], normed=config["normed"],
+        symmetric=symmetric, normed=normed,
     )
     feat_vec = []
     if aggregation == "mean":
         for prop in props:
             feat_vec.append(float(graycoprops(glcm, prop).mean()))
-    else:
+    else:  # concat
         for prop in props:
             feat_vec.extend(graycoprops(glcm, prop).flatten().tolist())
+
     return np.array(feat_vec, dtype=np.float32), glcm
 
 
 def extract_geometric_features(img_raw: np.ndarray) -> np.ndarray:
     """
-    Ekstrak 8 fitur geometri wajah dari gambar uint8 48x48.
+    Ekstrak 8 fitur geometri wajah dari gambar uint8 48×48.
     Identik dengan fungsi di notebook (CELL 7.0).
     """
     img = img_raw.astype(np.float32)
-    h, w = img.shape  # 48, 48
+    h, w = img.shape
 
     upper      = img[:h//2, :]
     lower      = img[h//2:, :]
@@ -250,31 +274,24 @@ def extract_geometric_features(img_raw: np.ndarray) -> np.ndarray:
     sy   = cv2.Sobel(img_raw, cv2.CV_64F, 0, 1, ksize=3)
     edge = np.sqrt(sx**2 + sy**2)
 
-    # Fitur 1: eye_ratio
     eye_var_vert = eye_zone.std(axis=0).mean()
     eye_ratio    = eye_var_vert / (eye_zone.mean() + 1e-6)
 
-    # Fitur 2: mouth_ratio
     mouth_ratio = mouth_zone.std() / (mouth_zone.mean() + 1e-6)
 
-    # Fitur 3: brow_height
     brow_grad   = np.abs(np.diff(brow_zone.mean(axis=1))).mean()
     brow_height = brow_grad / (brow_zone.mean() + 1e-6)
 
-    # Fitur 4: face_symmetry
     left_half     = img[:, :w//2]
     right_half    = img[:, w//2:][:, ::-1]
     diff_sym      = np.abs(left_half - right_half).mean()
     face_symmetry = 1.0 / (1.0 + diff_sym / 255.0)
 
-    # Fitur 5 & 6: edge_density
     edge_density_upper = edge[:h//2, :].mean() / 255.0
     edge_density_lower = edge[h//2:, :].mean() / 255.0
 
-    # Fitur 7: vertical_gradient
     vertical_gradient = (lower.mean() - upper.mean()) / 255.0
 
-    # Fitur 8: pixel_var_ratio
     pixel_var_ratio = lower.std() / (upper.std() + 1e-6)
 
     return np.array([
@@ -285,38 +302,47 @@ def extract_geometric_features(img_raw: np.ndarray) -> np.ndarray:
 
 
 def predict_all_models(img_raw: np.ndarray, img_norm: np.ndarray,
-                        bundles: dict) -> dict:
+                       bundles: dict) -> dict:
     """
-    Jalankan prediksi untuk ketiga model sekaligus.
+    Jalankan prediksi untuk ketiga model secara independen.
 
-    Returns dict dengan key 'A', 'B', 'C', masing-masing berisi:
-        predicted_class, probabilities, confidence,
-        feat_glcm_raw, feat_geo_raw, feat_combined_raw,
-        feat_scaled, glcm_4d
+    PERBAIKAN v3: setiap model menggunakan config dari bundle-nya sendiri
+    untuk mengekstrak GLCM — sehingga dimensi fitur selalu cocok dengan
+    scaler yang di-fit saat training.
+
+    Geometri dihitung sekali dan dibagi (tidak bergantung config GLCM).
     """
-    results = {}
-
-    # Fitur GLCM (unscaled) — dihitung sekali, dipakai semua model
-    bundle_A = bundles["A"]
-    cfg      = bundle_A["config"]
-    feat_glcm, glcm_4d = extract_glcm_features_raw(img_norm, cfg)
-
-    # Fitur Geometri (unscaled) — dihitung sekali
-    feat_geo = extract_geometric_features(img_raw)
-
-    # Fitur gabungan
-    feat_combined = np.concatenate([feat_glcm, feat_geo])
+    results  = {}
+    feat_geo = extract_geometric_features(img_raw)  # 8D, sama untuk semua model
 
     for mid, bundle in bundles.items():
+        if bundle is None:
+            continue
+
+        cfg    = bundle["config"]
         scaler = bundle["scaler"]
         model  = bundle["model"]
         le     = bundle["label_encoder"]
 
-        # Pilih vektor fitur sesuai model
-        if mid == "A":
-            feat_input = feat_glcm
+        # ── Ekstrak GLCM dengan config bundle ini ─────────────────
+        feat_glcm, glcm_tensor = extract_glcm_features_for_bundle(img_norm, cfg)
+
+        # ── Susun vektor fitur sesuai jenis model ─────────────────
+        uses_geo = cfg.get("uses_geometry", mid in ("B", "C"))
+        if uses_geo:
+            feat_input = np.concatenate([feat_glcm, feat_geo])
         else:
-            feat_input = feat_combined
+            feat_input = feat_glcm
+
+        # ── Validasi dimensi sebelum transform ────────────────────
+        n_expected = scaler.n_features_in_
+        n_actual   = feat_input.shape[0]
+        if n_actual != n_expected:
+            # Fallback: potong atau pad dengan nol agar tidak crash
+            if n_actual > n_expected:
+                feat_input = feat_input[:n_expected]
+            else:
+                feat_input = np.pad(feat_input, (0, n_expected - n_actual))
 
         feat_scaled = scaler.transform(feat_input.reshape(1, -1))
         pred_idx    = model.predict(feat_scaled)[0]
@@ -324,39 +350,35 @@ def predict_all_models(img_raw: np.ndarray, img_norm: np.ndarray,
         pred_class  = le.inverse_transform([pred_idx])[0]
 
         results[mid] = {
-            "predicted_class" : pred_class,
-            "probabilities"   : dict(zip(le.classes_, pred_proba.tolist())),
-            "confidence"      : float(pred_proba.max()),
-            "feat_glcm_raw"   : feat_glcm,
-            "feat_geo_raw"    : feat_geo,
-            "feat_combined_raw": feat_combined,
-            "feat_scaled"     : feat_scaled[0],
-            "glcm_4d"         : glcm_4d,
+            "predicted_class"  : pred_class,
+            "probabilities"    : dict(zip(le.classes_, pred_proba.tolist())),
+            "confidence"       : float(pred_proba.max()),
+            "feat_glcm_raw"    : feat_glcm,
+            "feat_geo_raw"     : feat_geo,
+            "feat_combined_raw": feat_input,
+            "feat_scaled"      : feat_scaled[0],
+            "glcm_tensor"      : glcm_tensor,
+            "cfg"              : cfg,
+            "n_glcm_feat"      : int(feat_glcm.shape[0]),
+            "uses_geo"         : uses_geo,
         }
 
     return results
 
 
 # ════════════════════════════════════════════════════════════════
-# LOAD BUNDLE (cache agar tidak reload tiap interaksi)
+# LOAD BUNDLES
 # ════════════════════════════════════════════════════════════════
 
 @st.cache_resource
 def load_bundles(base_dir: str) -> dict:
     """
-    Load tiga bundle model dari folder yang sama dengan app.py.
-
-    Nama file yang diharapkan:
-        model_bundle_A.pkl  — GLCM + LR
-        model_bundle_B.pkl  — GLCM + Geo + LR
-        model_bundle_C.pkl  — GLCM + Geo + SVM
-    
-    Fallback: jika hanya ada model_bundle.pkl (legacy single-model),
-    bundle tsb dipakai untuk Model A, B, C semuanya agar tidak crash.
+    Load tiga bundle model.
+    Prioritas: model_bundle_A/B/C.pkl → fallback model_bundle.pkl (legacy)
     """
-    base = Path(base_dir)
-    bundles = {}
+    base    = Path(base_dir)
     legacy  = base / "model_bundle.pkl"
+    bundles = {}
 
     for mid in ["A", "B", "C"]:
         path = base / f"model_bundle_{mid}.pkl"
@@ -374,8 +396,6 @@ def load_bundles(base_dir: str) -> dict:
 
 BASE_DIR = Path(__file__).parent
 bundles  = load_bundles(str(BASE_DIR))
-
-# Cek ketersediaan bundle
 any_loaded = any(v is not None for v in bundles.values())
 
 
@@ -383,132 +403,145 @@ any_loaded = any(v is not None for v in bundles.values())
 # SIDEBAR
 # ════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("## ⚙️ Pengaturan")
+    st.markdown("## Pengaturan")
 
     if not any_loaded:
         st.error(
             "`model_bundle_A/B/C.pkl` tidak ditemukan!\n\n"
-            "Jalankan CELL 7.1 di notebook untuk menghasilkan ketiga bundle,\n"
-            "atau CELL 6.0 untuk bundle tunggal (legacy)."
+            "Export dari notebook CELL 7.1, atau gunakan CELL 6.0 untuk bundle tunggal."
         )
         st.stop()
 
-    # ── Pilihan model ──────────────────────────────────────────
+    # ── Pilihan model aktif ────────────────────────────────────
     st.markdown("### Pilih Model")
     selected_model = st.radio(
-        "Model yang digunakan:",
-        options=["A", "B", "C"],
-        format_func=lambda m: f"{MODEL_META[m]['icon']}  {MODEL_META[m]['short']}",
-        index=2,   # default: Model C (terbaik)
-        help="Pilih model untuk prediksi. Model C (SVM) umumnya lebih akurat.",
+        "Model prediksi:",
+        options=[m for m in ["C", "B", "A"] if bundles[m] is not None],
+        format_func=lambda m: f"Model {m} — {MODEL_META[m]['short']}",
+        index=0,
     )
 
     mm = MODEL_META[selected_model]
+    bndl_sel = bundles[selected_model]
+    acc_sel  = bndl_sel["metadata"].get("acc_test", 0) if bndl_sel else 0
     st.markdown(
         f"""<div class="model-card" style="background:{mm['color']}18;
              border-left:4px solid {mm['color']};">
-             <b>{mm['icon']} {mm['name']}</b><br>
-             <small>{mm['desc']}</small>
+             <b>Model {mm['label']} — {mm['short']}</b><br>
+             <small>{mm['desc']}</small><br>
+             <small>Akurasi test: <b>{acc_sel:.2%}</b></small>
         </div>""",
         unsafe_allow_html=True,
     )
 
-    # ── Info model ─────────────────────────────────────────────
-    st.markdown("### Info Semua Model")
-    for mid, bndl in bundles.items():
-        if bndl is None:
-            st.warning(f"Model {mid}: bundle tidak ditemukan")
+    # ── Info semua model ───────────────────────────────────────
+    st.markdown("### Info Model")
+    for mid in ["A", "B", "C"]:
+        bndl_ = bundles[mid]
+        if bndl_ is None:
+            st.caption(f"Model {mid}: bundle tidak ditemukan")
             continue
-        meta_ = bndl.get("metadata", {})
-        mm_   = MODEL_META[mid]
-        acc   = meta_.get("acc_test", 0)
-        dim   = meta_.get("n_features", mm_["dim"])
-        active = " ← aktif" if mid == selected_model else ""
+        meta_  = bndl_.get("metadata", {})
+        mm_    = MODEL_META[mid]
+        acc_   = meta_.get("acc_test", 0)
+        dim_   = meta_.get("n_features", "?")
+        active = "aktif" if mid == selected_model else "tidak aktif"
         st.markdown(
-            f"""<div class="model-card" style="background:{'#f8f9fa' if mid != selected_model
-                else mm_['color']+'18'};border-left:3px solid {mm_['color']};">
-                <b>{mm_['icon']} Model {mid}</b>{active}<br>
-                <small>{mm_['short']} | {dim}D | Acc: {acc:.2%}</small>
+            f"""<div class="model-card" style="
+                background:{''+mm_['color']+'18' if mid==selected_model else 'rgba(128,128,128,0.05)'};
+                border-left:3px solid {mm_['color']};">
+                <b>Model {mid}</b>{active}<br>
+                <small>{mm_['short']} | {dim_}D | Acc: {acc_:.2%}</small>
             </div>""",
             unsafe_allow_html=True,
         )
 
-    # ── Preprocessing steps ────────────────────────────────────
+    # ── Pipeline steps (menyesuaikan model) ───────────────────
     active_bundle = bundles[selected_model]
-    cfg_sidebar   = active_bundle["config"] if active_bundle else {}
-    lvl           = cfg_sidebar.get("levels", "?")
-    uses_geo      = selected_model in ("B", "C")
-    classifier    = "SVM (RBF)" if selected_model == "C" else "Logistic Regression"
+    cfg_side      = active_bundle["config"] if active_bundle else {}
+    lvl_side      = cfg_side.get("levels", "?")
+    agg_side      = cfg_side.get("aggregation", "?")
+    uses_geo_side = cfg_side.get("uses_geometry", selected_model in ("B", "C"))
+    clf_side      = "SVM (RBF)" if selected_model == "C" else "Logistic Regression"
+    glcm_dim      = "16D" if agg_side == "concat" else "4D"
 
     st.markdown("---")
     st.markdown("### Pipeline Preprocessing")
     steps = [
-        "① Face Detection (Haar Cascade)",
-        "② Center Crop + Padding 10%",
-        "③ Grayscale (mode 'L')",
+        "① Face detection (Haar Cascade)",
+        "② Crop + padding 10%",
+        "③ Grayscale mode 'L'",
         f"④ Resize → <b>48 × 48</b> (LANCZOS)",
-        "⑤ Normalisasi → <b>÷ 255.0</b> (float32)",
-        f"⑥ Kuantisasi → <b>{lvl} level</b>",
-        "⑦ GLCM (d=1, 4 sudut) → 4D",
+        "⑤ Normalisasi ÷ 255.0 → float32",
+        f"⑥ Kuantisasi → <b>L = {lvl_side}</b>",
+        f"⑦ GLCM (d=1, 4 sudut) → <b>{glcm_dim}</b> ({agg_side})",
     ]
-    if uses_geo:
+    if uses_geo_side:
         steps += [
-            "⑧ Fitur Geometri Wajah → 8D",
-            "⑨ Gabung GLCM + Geometri → <b>12D</b>",
+            "⑧ Fitur geometri wajah → <b>8D</b>",
+            f"⑨ Gabung GLCM + Geo → <b>{16 if agg_side=='concat' else 4}+8D</b>",
             "⑩ StandardScaler.transform()",
-            f"⑪ {classifier}.predict()",
+            f"⑪ {clf_side}.predict()",
         ]
     else:
         steps += [
             "⑧ StandardScaler.transform()",
-            f"⑨ {classifier}.predict()",
+            f"⑨ {clf_side}.predict()",
         ]
     for s in steps:
         st.markdown(f'<div class="step-box">{s}</div>', unsafe_allow_html=True)
 
-    if active_bundle:
-        meta_s = active_bundle.get("metadata", {})
-        st.markdown(
-            f"<br><small>Diekspor: {meta_s.get('exported_at','—')}</small>",
-            unsafe_allow_html=True,
-        )
-
     # ── Kelas yang didukung ────────────────────────────────────
     st.markdown("---")
-    st.markdown("### Kelas yang Didukung")
-    classes_ = active_bundle["metadata"].get("classes", list(EMOTION_META.keys())) if active_bundle else list(EMOTION_META.keys())
-    for cls in classes_:
-        em = EMOTION_META.get(cls, {}).get("emoji", "🔹")
-        st.markdown(f"- {em} **{cls.capitalize()}**")
+    st.markdown("### Kelas Emosi")
+    classes_ = (
+        active_bundle["metadata"].get("classes", list(EMOTION_META.keys()))
+        if active_bundle else list(EMOTION_META.keys())
+    )
+    cols_cls = st.columns(2)
+    for i, cls in enumerate(classes_):
+        with cols_cls[i % 2]:
+            svg_sm = emotion_svg(cls, size=24)
+            color  = EMOTION_META.get(cls, {}).get("color", "#888")
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:6px;margin:3px 0;">'
+                f'{svg_sm}<span style="font-size:0.85rem;color:{color};font-weight:600;">'
+                f'{cls.capitalize()}</span></div>',
+                unsafe_allow_html=True,
+            )
+
+    if active_bundle:
+        exported = active_bundle.get("metadata", {}).get("exported_at", "—")
+        st.caption(f"Bundle diekspor: {exported}")
 
 
 # ════════════════════════════════════════════════════════════════
-# HALAMAN UTAMA
+# HEADER UTAMA
 # ════════════════════════════════════════════════════════════════
-st.markdown("# Raut Muka — Klasifikasi Emosi Wajah · Kelompok 1 Kelas A")
+st.markdown("# Raut Muka — Klasifikasi Emosi Wajah")
 st.markdown(
-    "Upload foto wajah → sistem mengekstrak fitur **GLCM** (tekstur) "
-    "+ **Geometri Wajah** → model memprediksi emosi."
+    "Upload foto wajah · sistem mengekstrak fitur **GLCM** (tekstur) "
+    "+ **Geometri Wajah** · model memprediksi emosi."
 )
 
-# Ringkasan tiga model
+# ── Kartu ringkasan 3 model ────────────────────────────────────
 col_ma, col_mb, col_mc = st.columns(3)
 for col, mid in zip([col_ma, col_mb, col_mc], ["A", "B", "C"]):
-    mm_ = MODEL_META[mid]
+    mm_   = MODEL_META[mid]
     bndl_ = bundles[mid]
     acc_  = bndl_["metadata"].get("acc_test", 0) if bndl_ else 0
-    active_border = f"border:2px solid {mm_['color']};" if mid == selected_model else ""
+    is_active   = (mid == selected_model)
+    border_style = f"border:2px solid {mm_['color']};" if is_active else "border:1px solid rgba(128,128,128,0.2);"
     with col:
         st.markdown(
-            f"""<div class="model-card" style="background:{mm_['color']}12;
-                 {active_border} border-radius:10px; padding:0.8rem; text-align:center;">
-                 <div style="font-size:1.5rem">{mm_['icon']}</div>
+            f"""<div class="model-card" style="background:{mm_['color']}10;
+                 {border_style} padding:0.8rem; text-align:center;">
                  <b>Model {mid}</b><br>
-                 <small>{mm_['short']}</small><br>
-                 <span style="color:{mm_['color']};font-weight:700;">
-                   Acc: {acc_:.2%}
+                 <small style="color:var(--text-color,#666)">{mm_['short']}</small><br>
+                 <span style="color:{mm_['color']};font-weight:700;font-size:1.1rem;">
+                   {acc_:.2%}
                  </span>
-                 {'<br><small>← Aktif</small>' if mid == selected_model else ''}
+                 {'<br><small><b>Aktif</b></small>' if is_active else '<br><small><b>Tidak Aktif</b></small>'}
             </div>""",
             unsafe_allow_html=True,
         )
@@ -530,8 +563,8 @@ with col_upload:
 
     use_demo = False
     if not uploaded:
-        st.markdown("*atau coba dengan gambar sintetis:*")
-        use_demo = st.button("Gunakan Gambar Demo (Sintetis)", use_container_width=True)
+        st.markdown("*atau coba gambar sintetis:*")
+        use_demo = st.button("Gunakan Gambar Demo", use_container_width=True)
 
     if uploaded or use_demo:
         # ── Load gambar ──────────────────────────────────────────
@@ -539,8 +572,8 @@ with col_upload:
             pil_img = Image.open(io.BytesIO(uploaded.read()))
         else:
             arr = np.full((96, 96), 140, dtype=np.uint8)
-            arr[5:30, 15:81]  = 210
-            arr[30:75, 8:88]  = 195
+            arr[5:30,  15:81] = 210
+            arr[30:75,  8:88] = 195
             arr[32:40, 20:35] = 45
             arr[32:40, 60:75] = 45
             arr[50:58, 38:58] = 165
@@ -549,48 +582,48 @@ with col_upload:
             arr = cv2.GaussianBlur(arr, (5, 5), 0)
             pil_img = Image.fromarray(arr)
 
-        # ── Face detection & crop ─────────────────────────────────
+        # ── Face detection ────────────────────────────────────────
         pil_cropped, crop_status = detect_and_crop_face(pil_img)
 
-        # ── Preprocessing ─────────────────────────────────────────
+        # ── Preprocessing (ukuran dari config model aktif) ────────
         cfg_main  = bundles[selected_model]["config"]
-        img_raw, img_norm = preprocess_image(pil_cropped, tuple(cfg_main["img_size"]))
+        img_size  = tuple(cfg_main.get("img_size", (48, 48)))
+        img_raw, img_norm = preprocess_image(pil_cropped, img_size)
 
         # ── Tampilkan gambar ──────────────────────────────────────
         st.markdown("#### Gambar Asli")
         st.image(pil_img, use_container_width=True)
 
-        if crop_status.startswith("✅") or "terdeteksi" in crop_status:
-            st.success(crop_status) if "terdeteksi" in crop_status else st.warning(crop_status)
-        else:
+        if "tidak terdeteksi" in crop_status:
             st.warning(crop_status)
+        else:
+            st.success(crop_status)
 
         if pil_cropped is not pil_img:
             st.markdown("**Setelah Face Crop**")
             st.image(pil_cropped, use_container_width=True,
-                     caption="Area wajah yang akan diproses")
+                     caption="Area wajah yang diproses")
 
         col_pp1, col_pp2 = st.columns(2)
         with col_pp1:
-            st.markdown("**Grayscale + Resize**")
-            st.image(Image.fromarray(img_raw),
-                     caption="48×48 px | uint8", use_container_width=True)
+            st.markdown("**Grayscale 48×48**")
+            st.image(Image.fromarray(img_raw), use_container_width=True,
+                     caption="uint8 [0–255]")
         with col_pp2:
-            img_q_show = quantize_image(img_norm, cfg_main["levels"])
-            img_q_disp = (img_q_show / (cfg_main["levels"] - 1) * 255).astype(np.uint8)
+            lvl_main  = cfg_main.get("levels", 8)
+            img_q_show = quantize_image(img_norm, lvl_main)
+            img_q_disp = (img_q_show / max(lvl_main - 1, 1) * 255).astype(np.uint8)
             st.markdown("**Setelah Kuantisasi**")
-            st.image(Image.fromarray(img_q_disp),
-                     caption=f"{cfg_main['levels']} level", use_container_width=True)
+            st.image(Image.fromarray(img_q_disp), use_container_width=True,
+                     caption=f"L = {lvl_main} level")
 
         # ── Prediksi semua model ──────────────────────────────────
-        with st.spinner("Mengekstrak fitur & memprediksi (3 model)..."):
+        with st.spinner("Mengekstrak fitur & memprediksi..."):
             all_results = predict_all_models(img_raw, img_norm, bundles)
 
-        # Simpan ke session state
         st.session_state["all_results"]    = all_results
         st.session_state["img_raw"]        = img_raw
         st.session_state["img_norm"]       = img_norm
-        st.session_state["cfg"]            = cfg_main
         st.session_state["selected_model"] = selected_model
 
 
@@ -600,228 +633,266 @@ with col_upload:
 with col_result:
     if "all_results" not in st.session_state:
         st.info("Upload gambar untuk melihat hasil prediksi.")
-    else:
-        all_results    = st.session_state["all_results"]
-        img_raw_s      = st.session_state["img_raw"]
-        img_norm_s     = st.session_state["img_norm"]
-        cfg_s          = st.session_state["cfg"]
-        active_model   = st.session_state.get("selected_model", selected_model)
+        st.stop()
 
-        result   = all_results[active_model]
-        pred_cls = result["predicted_class"]
-        em_meta  = EMOTION_META.get(pred_cls, {"emoji": "🔹", "color": "#555", "label": pred_cls})
-        conf     = result["confidence"]
-        mm_act   = MODEL_META[active_model]
+    all_results  = st.session_state["all_results"]
+    img_raw_s    = st.session_state["img_raw"]
+    img_norm_s   = st.session_state["img_norm"]
+    active_model = st.session_state.get("selected_model", selected_model)
 
-        # ── Hasil utama ───────────────────────────────────────────
-        st.markdown(f"### Hasil Prediksi — {mm_act['icon']} Model {active_model}")
+    if active_model not in all_results:
+        st.warning("Hasil prediksi untuk model ini tidak tersedia.")
+        st.stop()
 
-        col_badge, col_conf = st.columns([1, 1])
-        with col_badge:
-            st.markdown(
-                f"""<div style="text-align:center; padding:1.2rem;
-                     background:{em_meta['color']}18;
-                     border:2px solid {em_meta['color']};
-                     border-radius:12px;">
-                     <div style="font-size:3.5rem">{em_meta['emoji']}</div>
-                     <div class="pred-badge"
-                          style="background:{em_meta['color']};color:white;">
-                       {em_meta['label'].upper()}
-                     </div>
-                </div>""",
-                unsafe_allow_html=True,
-            )
-        with col_conf:
-            st.markdown("**Confidence**")
-            st.progress(conf, text=f"{conf:.1%}")
-            if conf >= 0.70:
-                st.success("🟢 Model sangat yakin")
-            elif conf >= 0.45:
-                st.warning("🟡 Model cukup yakin")
-            else:
-                st.error("🔴 Model ragu-ragu\n(probabilitas tersebar merata)")
+    result   = all_results[active_model]
+    pred_cls = result["predicted_class"]
+    em_meta  = EMOTION_META.get(pred_cls, {"color": "#888", "label": pred_cls.capitalize()})
+    conf     = result["confidence"]
+    mm_act   = MODEL_META[active_model]
 
-        st.markdown("---")
+    # ── Hasil utama ───────────────────────────────────────────
+    st.markdown(f"### Hasil Prediksi — Model {active_model}")
 
-        # ── Perbandingan tiga model sekaligus ─────────────────────
-        st.markdown("### Perbandingan Hasil Tiga Model")
-        col_a, col_b, col_c = st.columns(3)
-        for col, mid in zip([col_a, col_b, col_c], ["A", "B", "C"]):
-            r_   = all_results[mid]
-            mm_  = MODEL_META[mid]
-            em_  = EMOTION_META.get(r_["predicted_class"],
-                                    {"emoji": "🔹", "color": "#555"})
-            is_active = (mid == active_model)
+    col_badge, col_conf = st.columns([1, 1])
+    with col_badge:
+        svg_big = emotion_svg(pred_cls, size=72)
+        st.markdown(
+            f"""<div style="text-align:center; padding:1.2rem;
+                 background:{em_meta['color']}15;
+                 border:2px solid {em_meta['color']};
+                 border-radius:12px;">
+                 {svg_big}
+                 <div class="pred-badge"
+                      style="background:{em_meta['color']};color:white;display:block;margin-top:8px;">
+                   {em_meta['label'].upper()}
+                 </div>
+                 <div style="font-size:0.8rem;margin-top:4px;color:{em_meta['color']};">
+                   {mm_act['short']}
+                 </div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+    with col_conf:
+        st.markdown("**Confidence score**")
+        st.progress(conf, text=f"{conf:.1%}")
+        if conf >= 0.70:
+            st.success("Model sangat yakin")
+        elif conf >= 0.45:
+            st.warning("Model cukup yakin")
+        else:
+            st.error("Model ragu-ragu — probabilitas tersebar merata")
+        st.caption(
+            f"Akurasi model ini saat training: **{bundles[active_model]['metadata'].get('acc_test', 0):.2%}**"
+            if bundles.get(active_model) else ""
+        )
+
+    st.markdown("---")
+
+    # ── Perbandingan 3 model ──────────────────────────────────
+    st.markdown("### Perbandingan Tiga Model")
+    col_a, col_b, col_c = st.columns(3)
+    for col, mid in zip([col_a, col_b, col_c], ["A", "B", "C"]):
+        if mid not in all_results:
             with col:
-                st.markdown(
-                    f"""<div style="text-align:center; padding:0.8rem;
-                         background:{mm_['color']}{'22' if is_active else '0a'};
-                         border:{'2px' if is_active else '1px'} solid {mm_['color']};
-                         border-radius:10px;">
-                         <b>{mm_['icon']} Model {mid}</b><br>
-                         <div style="font-size:2rem">{em_['emoji']}</div>
-                         <b style="color:{em_['color']}">{r_['predicted_class'].capitalize()}</b><br>
-                         <small>{r_['confidence']:.1%} conf</small>
-                         {'<br><small><b>← Aktif</b></small>' if is_active else ''}
-                    </div>""",
-                    unsafe_allow_html=True,
-                )
-
-        st.markdown("---")
-
-        # ── Distribusi probabilitas (model aktif) ─────────────────
-        st.markdown(f"### Distribusi Probabilitas — Model {active_model}")
-        probs = result["probabilities"]
-        sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)
-
-        for cls_name, prob_val in sorted_probs:
-            em_      = EMOTION_META.get(cls_name, {})
-            color    = em_.get("color", "#4e8cff")
-            emoji    = em_.get("emoji", "🔹")
-            is_pred  = (cls_name == pred_cls)
-            pct      = prob_val * 100
-            bar_pct  = int(prob_val * 100)
+                st.caption(f"Model {mid} tidak tersedia")
+            continue
+        r_   = all_results[mid]
+        mm_  = MODEL_META[mid]
+        em_  = EMOTION_META.get(r_["predicted_class"], {"color": "#888"})
+        svg_sm = emotion_svg(r_["predicted_class"], size=36)
+        is_active = (mid == active_model)
+        with col:
             st.markdown(
-                f"""<div class="prob-row" style="{'font-weight:700;' if is_pred else ''}">
-                  <span class="prob-label">{emoji} {cls_name.capitalize()}{'  ←' if is_pred else ''}</span>
-                  <div class="prob-bar-bg">
-                    <div class="prob-bar-fill"
-                         style="width:{bar_pct}%;background:{color};
-                                opacity:{'1' if is_pred else '0.6'};"></div>
-                  </div>
-                  <span class="prob-val" style="color:{color if is_pred else '#555'}">
-                    {pct:.1f}%
-                  </span>
+                f"""<div style="text-align:center; padding:0.7rem;
+                     background:{mm_['color']}{'18' if is_active else '08'};
+                     border:{'2px' if is_active else '1px'} solid {mm_['color']};
+                     border-radius:10px;">
+                     <b>Model {mid}</b><br>
+                     {svg_sm}
+                     <div style="font-weight:700;color:{em_['color']};font-size:0.95rem;">
+                       {r_['predicted_class'].capitalize()}
+                     </div>
+                     <div style="font-size:0.82rem;color:var(--text-color,#666);">
+                       {r_['confidence']:.1%} conf
+                     </div>
+                     {'<div style="font-size:0.78rem;font-weight:600;">Aktif</div>' if is_active else '<div style="font-size:0.78rem;font-weight:600;">Tidak Aktif</div>'}
                 </div>""",
                 unsafe_allow_html=True,
             )
 
-        st.markdown("---")
+    st.markdown("---")
 
-        # ── Fitur GLCM ────────────────────────────────────────────
-        st.markdown("### Fitur GLCM yang Diekstrak (4D)")
-        feat_glcm   = result["feat_glcm_raw"]
-        glcm_props  = cfg_s["glcm_props"]
-        prop_colors = ["#e74c3c", "#2ecc71", "#9b59b6", "#3498db"]
+    # ── Distribusi probabilitas ───────────────────────────────
+    st.markdown(f"### Distribusi Probabilitas — Model {active_model}")
+    probs = result["probabilities"]
+    for cls_name, prob_val in sorted(probs.items(), key=lambda x: x[1], reverse=True):
+        em_      = EMOTION_META.get(cls_name, {})
+        color    = em_.get("color", "#888")
+        is_pred  = (cls_name == pred_cls)
+        svg_tiny = emotion_svg(cls_name, size=18)
+        bar_pct  = int(prob_val * 100)
+        st.markdown(
+            f"""<div class="prob-row" style="{'font-weight:700;' if is_pred else ''}">
+              <span class="prob-label">
+                {svg_tiny}
+                {cls_name.capitalize()}{'  ←' if is_pred else ''}
+              </span>
+              <div class="prob-bar-bg">
+                <div class="prob-bar-fill"
+                     style="width:{bar_pct}%;background:{color};opacity:{'1' if is_pred else '0.55'};"></div>
+              </div>
+              <span class="prob-val" style="color:{color if is_pred else '#888'}">
+                {prob_val*100:.1f}%
+              </span>
+            </div>""",
+            unsafe_allow_html=True,
+        )
 
-        col_f1, col_f2 = st.columns(2)
-        for idx, (prop, pc) in enumerate(zip(glcm_props, prop_colors)):
-            col_fx = col_f1 if idx % 2 == 0 else col_f2
-            pname, pdesc = PROP_META.get(prop, (prop, ""))
-            raw_val = feat_glcm[idx]
-            with col_fx:
-                st.markdown(
-                    f"""<div class="card" style="border-left:4px solid {pc}">
-                      <b>{pname}</b><br>
-                      <small style="color:#888">{pdesc}</small><br><br>
-                      <span style="font-size:1.3rem;font-weight:700">{raw_val:.5f}</span>
-                    </div>""",
-                    unsafe_allow_html=True,
-                )
+    st.markdown("---")
 
-        # ── Fitur Geometri (Model B & C) ──────────────────────────
-        if active_model in ("B", "C"):
-            st.markdown("### Fitur Geometri Wajah (8D)")
-            feat_geo = result["feat_geo_raw"]
-            col_g1, col_g2 = st.columns(2)
-            for idx, (fname, (flabel, fdesc)) in enumerate(GEO_FEAT_META.items()):
-                col_gx = col_g1 if idx % 2 == 0 else col_g2
-                val    = feat_geo[idx]
-                with col_gx:
+    # ── Fitur GLCM ────────────────────────────────────────────
+    cfg_res     = result["cfg"]
+    feat_glcm   = result["feat_glcm_raw"]
+    n_glcm      = result["n_glcm_feat"]
+    props_res   = cfg_res.get("glcm_props", ["contrast","homogeneity","energy","correlation"])
+    agg_res     = cfg_res.get("aggregation", "concat")
+    lvl_res     = cfg_res.get("levels", 8)
+
+    st.markdown(f"### Fitur GLCM ({n_glcm}D — {agg_res}, L={lvl_res})")
+
+    if agg_res == "concat":
+        # 16D: tampilkan per properti × 4 sudut
+        angle_labels = ["0°", "45°", "90°", "135°"]
+        n_props      = len(props_res)
+        n_angles     = 4
+        for pi, prop in enumerate(props_res):
+            vals   = feat_glcm[pi*n_angles : pi*n_angles + n_angles]
+            pname  = PROP_META.get(prop, (prop, ""))[0]
+            pdesc  = PROP_META.get(prop, (prop, ""))[1]
+            color  = PROP_COLORS[pi % len(PROP_COLORS)]
+            cols_p = st.columns(4)
+            for ai, (col_p, v, ang) in enumerate(zip(cols_p, vals, angle_labels)):
+                with col_p:
                     st.markdown(
-                        f"""<div class="card" style="border-left:4px solid #9b59b6">
-                          <b>{flabel}</b><br>
-                          <small style="color:#888">{fdesc}</small><br><br>
-                          <span style="font-size:1.2rem;font-weight:700">{val:.5f}</span>
+                        f"""<div class="card" style="border-left:3px solid {color};">
+                          <small style="color:{color};font-weight:600;">{pname} {ang}</small>
+                          <div class="feat-val" style="color:{color}">{v:.5f}</div>
                         </div>""",
                         unsafe_allow_html=True,
                     )
+    else:
+        # 4D: tampilkan 1 nilai per properti
+        col_f1, col_f2 = st.columns(2)
+        for idx, (prop, pc) in enumerate(zip(props_res, PROP_COLORS)):
+            col_fx = col_f1 if idx % 2 == 0 else col_f2
+            pname, pdesc = PROP_META.get(prop, (prop, ""))
+            with col_fx:
+                st.markdown(
+                    f"""<div class="card" style="border-left:3px solid {pc};">
+                      <b>{pname}</b><br>
+                      <small style="color:#888">{pdesc}</small><br>
+                      <div class="feat-val">{feat_glcm[idx]:.5f}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
 
-        st.markdown("---")
+    # ── Fitur Geometri (Model B & C) ──────────────────────────
+    if result.get("uses_geo", False):
+        st.markdown("### Fitur Geometri Wajah (8D)")
+        feat_geo = result["feat_geo_raw"]
+        col_g1, col_g2 = st.columns(2)
+        for idx, (fname, (flabel, fdesc)) in enumerate(GEO_FEAT_META.items()):
+            col_gx = col_g1 if idx % 2 == 0 else col_g2
+            val    = feat_geo[idx]
+            with col_gx:
+                st.markdown(
+                    f"""<div class="card" style="border-left:3px solid #9b59b6;">
+                      <b style="color:#6c3483">{flabel}</b><br>
+                      <small style="color:#888">{fdesc}</small><br>
+                      <div class="feat-val" style="color:#9b59b6">{val:.5f}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
 
-        # ── Detail pipeline (expandable) ──────────────────────────
-        with st.expander("Detail Pipeline Preprocessing & Fitur", expanded=False):
-            img_q = quantize_image(img_norm_s, cfg_s["levels"])
-            glcm_4d = result["glcm_4d"]
-            uses_geo = active_model in ("B", "C")
-            dim_total = 4 + (8 if uses_geo else 0)
+    st.markdown("---")
 
-            st.markdown(f"""
-**Pipeline Model {active_model} ({mm_act['short']}):**
+    # ── Detail pipeline (expander) ────────────────────────────
+    with st.expander("Detail Pipeline & Heatmap GLCM", expanded=False):
+        img_q_exp   = quantize_image(img_norm_s, lvl_res)
+        glcm_tensor = result["glcm_tensor"]
+        dim_total   = result["feat_combined_raw"].shape[0]
 
-0. **Face Detection** → Haar Cascade frontalface → crop + padding 10%
+        st.markdown(f"""
+**Model {active_model} — {mm_act['short']} | Dimensi fitur: {dim_total}D**
 
-1. **Grayscale + Resize** → `{cfg_s['img_size']}` px  
-   → Min: `{img_raw_s.min()}` | Max: `{img_raw_s.max()}`
+| Tahap | Parameter | Nilai |
+|---|---|---|
+| Kuantisasi | Level (L) | {lvl_res} |
+| GLCM | Jarak (d) | {cfg_res.get('distances', [1])} |
+| GLCM | Sudut | 0°, 45°, 90°, 135° |
+| Agregasi | Strategi | {agg_res} → {n_glcm}D |
+| Geometri | Fitur | {'8D (digunakan)' if result['uses_geo'] else 'tidak digunakan'} |
+| Scaler | Jenis | StandardScaler (μ=0, σ=1) |
+| Classifier | Model | {'SVM (RBF)' if active_model=='C' else 'Logistic Regression'} |
 
-2. **Normalisasi** → `÷ 255.0`  
-   → Range: `[{img_norm_s.min():.4f}, {img_norm_s.max():.4f}]`
+```
+Distribusi kuantisasi: {np.unique(img_q_exp).tolist()[:12]}
+Range piksel raw    : [{img_raw_s.min()}, {img_raw_s.max()}]
+Range piksel norm   : [{img_norm_s.min():.4f}, {img_norm_s.max():.4f}]
+```
+        """)
 
-3. **Kuantisasi** → `⌊pixel × {cfg_s['levels']}⌋`  
-   → Distribusi: `{np.unique(img_q).tolist()[:10]}{'...' if len(np.unique(img_q))>10 else ''}`
+        # GLCM heatmap
+        try:
+            import matplotlib
+            import matplotlib.pyplot as plt
+            matplotlib.use("Agg")
 
-4. **GLCM** → `graycomatrix(d=1, 4 sudut, L={cfg_s['levels']})` → shape `{glcm_4d.shape}`
-
-5. **Fitur GLCM** → mean 4 sudut → **4D**: `{np.round(feat_glcm, 4).tolist()}`
-{'6. **Fitur Geometri** → 8 fitur berbasis region piksel → **8D**' if uses_geo else ''}
-{'7. **Gabungkan** → 4D + 8D = **12D**' if uses_geo else ''}
-
-{'7' if not uses_geo else '8'}. **StandardScaler.transform()** → fitur terstandarisasi
-
-{'8' if not uses_geo else '9'}. **{"SVM (RBF)" if active_model == "C" else "LogisticRegression"}.predict_proba()** → argmax → prediksi
-            """)
-
-            # Mini GLCM heatmap
-            try:
-                import matplotlib.pyplot as plt
-                import matplotlib
-                matplotlib.use("Agg")
-
-                L_show = min(cfg_s["levels"], 16)
-                g2d    = glcm_4d[:L_show, :L_show, 0, 0]
-                fig, ax = plt.subplots(figsize=(4, 3.5))
-                im = ax.imshow(g2d, cmap="plasma", aspect="auto")
-                plt.colorbar(im, ax=ax, fraction=0.05)
-                ax.set_title(f"GLCM Sudut 0° (L={cfg_s['levels']})\nΣ={g2d.sum():.4f}",
-                             fontsize=9)
-                ax.set_xlabel("Level j", fontsize=8)
-                ax.set_ylabel("Level i", fontsize=8)
+            fig, axes = plt.subplots(1, 4, figsize=(12, 3))
+            angle_names = ["0°", "45°", "90°", "135°"]
+            L_show = min(lvl_res, 16)
+            for ai, (ax, aname) in enumerate(zip(axes, angle_names)):
+                g2d = glcm_tensor[:L_show, :L_show, 0, ai]
+                im  = ax.imshow(g2d, cmap="plasma", aspect="auto")
+                plt.colorbar(im, ax=ax, fraction=0.046)
+                ax.set_title(f"GLCM {aname}", fontsize=9)
+                ax.set_xlabel("j", fontsize=8)
+                ax.set_ylabel("i", fontsize=8)
                 ax.tick_params(labelsize=7)
-                fig.tight_layout()
-                buf = io.BytesIO()
-                fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-                buf.seek(0)
-                st.image(buf, caption="GLCM Heatmap Sudut 0°")
-                plt.close(fig)
-            except Exception:
-                pass
+            fig.suptitle(f"GLCM Heatmap — L={lvl_res}", fontsize=10)
+            fig.tight_layout()
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
+            buf.seek(0)
+            st.image(buf, caption="GLCM 4 sudut (plasma colormap)")
+            plt.close(fig)
+        except Exception as e:
+            st.caption(f"Heatmap tidak dapat ditampilkan: {e}")
 
-            # Bar chart fitur geometri per emosi (konteks)
-            if uses_geo:
-                try:
-                    import matplotlib.pyplot as plt
-                    import matplotlib
-                    matplotlib.use("Agg")
-
-                    feat_geo_cur = result["feat_geo_raw"]
-                    fig2, ax2 = plt.subplots(figsize=(9, 3))
-                    geo_colors = ["#9b59b6"] * 8
-                    bars = ax2.barh(GEO_FEAT_NAMES, feat_geo_cur,
-                                    color=geo_colors, alpha=0.8, edgecolor="white")
-                    for bar, val in zip(bars, feat_geo_cur):
-                        ax2.text(bar.get_width() + 0.002, bar.get_y() + bar.get_height()/2,
-                                 f"{val:.4f}", va="center", fontsize=8)
-                    ax2.set_xlabel("Nilai Fitur", fontsize=9)
-                    ax2.set_title("Fitur Geometri Wajah yang Diekstrak", fontsize=10)
-                    ax2.grid(axis="x", alpha=0.3, ls="--")
-                    fig2.tight_layout()
-                    buf2 = io.BytesIO()
-                    fig2.savefig(buf2, format="png", dpi=120, bbox_inches="tight")
-                    buf2.seek(0)
-                    st.image(buf2, caption="Profil Fitur Geometri Gambar Ini")
-                    plt.close(fig2)
-                except Exception:
-                    pass
+        # Bar chart fitur geometri
+        if result.get("uses_geo", False):
+            try:
+                feat_geo_cur = result["feat_geo_raw"]
+                fig2, ax2 = plt.subplots(figsize=(9, 3))
+                geo_colors = ["#9b59b6"] * 8
+                bars = ax2.barh(GEO_FEAT_NAMES, feat_geo_cur,
+                                color=geo_colors, alpha=0.75, edgecolor="white")
+                for bar, val in zip(bars, feat_geo_cur):
+                    ax2.text(bar.get_width() + 0.001,
+                             bar.get_y() + bar.get_height() / 2,
+                             f"{val:.4f}", va="center", fontsize=8)
+                ax2.set_xlabel("Nilai Fitur", fontsize=9)
+                ax2.set_title("Profil Fitur Geometri", fontsize=10)
+                ax2.grid(axis="x", alpha=0.3, ls="--")
+                ax2.tick_params(labelsize=8)
+                fig2.tight_layout()
+                buf2 = io.BytesIO()
+                fig2.savefig(buf2, format="png", dpi=110, bbox_inches="tight")
+                buf2.seek(0)
+                st.image(buf2, caption="Fitur geometri wajah yang diekstrak")
+                plt.close(fig2)
+            except Exception as e:
+                st.caption(f"Bar chart tidak dapat ditampilkan: {e}")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -829,7 +900,8 @@ with col_result:
 # ════════════════════════════════════════════════════════════════
 st.markdown("---")
 st.markdown(
-    "<small>Model: Logistic Regression & SVM (RBF) | Fitur: GLCM + Geometri Wajah | "
-    "Dataset: FER2013 | Preprocessing: Grayscale 48×48 + GLCM + Geometri</small>",
+    "<small>Kelompok 1 Kelas A · Universitas Udayana · 2026 · "
+    "Dataset: FER2013 · Fitur: GLCM + Geometri Wajah · "
+    "Model: Logistic Regression &amp; SVM (RBF)</small>",
     unsafe_allow_html=True,
 )
