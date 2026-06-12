@@ -1,128 +1,74 @@
-# Klasifikasi Emosi Wajah - Kelompok 1 Kelas A
+# Raut Muka App: Klasifikasi Emosi Wajah - Kelompok 1 Kelas A
 
-Aplikasi web untuk mengklasifikasikan emosi dari foto wajah  
-menggunakan **GLCM (Gray-Level Co-occurrence Matrix)** + **Logistic Regression**.
+Aplikasi web untuk mengklasifikasikan emosi dari foto wajah manusia (*angry, happy, sad, surprise*).
+
+Sistem ini menggunakan **Model A (GLCM + Logistic Regression)** sebagai model utama inferensi. Selain itu, proyek ini juga mencakup eksplorasi eksperimen tambahan yang membandingkan performa model menggunakan ekstraksi fitur **Geometri** dan algoritma **Support Vector Machine (SVM)**.
+
+**Demo Aplikasi:** [https://rautmuka.streamlit.app/](https://rautmuka.streamlit.app/)
 
 ---
 
 ## Struktur Folder
 
+```text
+├── dataset/                  ← Folder dataset gambar
+├── streamlit_app/            ← Folder khusus aplikasi web Streamlit
+│   ├── app.py                ← Aplikasi Streamlit utama (berisi UI & pipeline inferensi)
+│   ├── model_bundle_A.pkl    ← File bundle model eksperimen A
+│   ├── model_bundle_B.pkl    ← File bundle model eksperimen B
+│   ├── model_bundle_C.pkl    ← File bundle model eksperimen C
+│   ├── model_bundle.pkl      ← Model utama (GLCM+LR), scaler, label encoder, & config (hasil export)
+│   └── requirements.txt      ← Daftar dependensi Python untuk menjalankan Streamlit
+├── main.ipynb                ← Notebook eksperimen utama (ekstraksi fitur, training, & evaluasi)
+├── README.md                 ← File dokumentasi ini
+└── requirements.txt          ← Daftar dependensi Python untuk keseluruhan proyek (termasuk notebook)
+
 ```
-streamlit_app/
-├── app.py               ← Aplikasi Streamlit utama
-├── streamlit_app        ← Model + scaler + config (dari notebook)
-├── requirements.txt     ← Dependensi Python
-└── README.md            ← File ini
-```
+
+*(Catatan: File `model_bundle.pkl` beserta varian model lainnya harus berada di dalam direktori `streamlit_app` yang sama dengan `app.py` agar aplikasi dapat memuat model dengan benar).*
 
 ---
 
-## Cara Menjalankan
+## Cara Menjalankan Lokal
 
-### Langkah 1 — Generate `model_bundle.pkl` dari Notebook
+Pastikan Python sudah terinstal, lalu jalankan perintah berikut di terminal Anda:
 
-Buka notebook `klasifikasi_emosi_GLCM_v4_final.ipynb`, jalankan **semua cell** mulai dari BAGIAN 0 hingga **CELL 6.0** (BAGIAN 6 — Export Model).
-
-File `model_bundle.pkl` akan muncul di folder `streamlit_app/`.
-
-### Langkah 2 — Install Dependensi
+**1. Install dependensi**
+(Disarankan untuk masuk ke folder `streamlit_app` terlebih dahulu jika hanya ingin menjalankan aplikasinya)
 
 ```bash
-pip install -r requirements.txt
+pip install -r streamlit_app/requirements.txt
+
 ```
 
-### Langkah 3 — Jalankan Aplikasi
+**2. Jalankan aplikasi**
 
 ```bash
 cd streamlit_app
 streamlit run app.py
+
 ```
 
-Buka browser di: `http://localhost:8501`
+Aplikasi akan otomatis terbuka di browser melalui alamat: `http://localhost:8501`
 
 ---
 
-## Pipeline Preprocessing (WAJIB Sama dengan Training)
+## Pipeline Inferensi (Model Utama)
 
-Preprocessing di app ini **identik** dengan yang dipakai saat training:
+Pipeline yang berjalan pada aplikasi web dirancang ringkas dan identik dengan proses *training* Model A:
 
-```
-Gambar Upload (format apa pun)
-        ↓
-① Konversi Grayscale ('L')          ← PIL .convert('L')
-        ↓
-② Resize → 48 × 48 px (LANCZOS)     ← PIL .resize((48,48), LANCZOS)
-        ↓
-③ Array uint8 [0, 255]
-        ↓
-④ Normalisasi ÷ 255.0               ← float32 [0.0, 1.0]
-        ↓
-⑤ Kuantisasi ⌊pixel × L⌋           ← L dari model_bundle (misal L=16)
-        ↓
-⑥ graycomatrix(d=1, 4 sudut,        ← param dari model_bundle
-               symmetric, normed)
-        ↓
-⑦ Ekstrak 4 properti GLCM
-        ↓
-⑧ StandardScaler.transform()        ← scaler dari model_bundle
-        ↓
-⑨ LogisticRegression.predict()      ← model dari model_bundle
-        ↓
-Prediksi Kelas + Probabilitas
-```
+1. **Pre-processing:** Menerima unggahan gambar → Konversi ke Grayscale (`L`) → Resize 48×48 px (LANCZOS) → Normalisasi rentang piksel [0,1].
+2. **Ekstraksi Fitur (GLCM):** Kuantisasi level piksel → Ekstraksi GLCM ($d=1$, 4 sudut, *symmetric, normed*) → Mendapatkan nilai *contrast, homogeneity, energy, correlation* yang digabung (*concat*).
+3. **Prediksi:** Transformasi fitur menggunakan `StandardScaler` (dari *bundle*, tanpa *fitting* ulang) → Klasifikasi probabilitas menggunakan **Logistic Regression** → Menghasilkan output label emosi beserta skor *confidence*.
 
-> **Penting:** Selalu gunakan `scaler.transform()` (bukan `fit_transform()`)  
-> di app. Scaler harus yang **sama** dengan saat training agar hasilnya valid.
-
----
-
-## Isi `model_bundle.pkl`
-
-```python
-{
-    'model'        : LogisticRegression,  # model yang sudah ditraining
-    'scaler'       : StandardScaler,      # scaler yang sudah di-fit
-    'label_encoder': LabelEncoder,        # angka → nama kelas
-    'config': {
-        'img_size'   : (48, 48),
-        'levels'     : 16,                # level kuantisasi GLCM
-        'distances'  : [1],
-        'angles'     : [0, π/4, π/2, 3π/4],
-        'aggregation': 'mean',            # atau 'concat'
-        'glcm_props' : ['contrast', 'homogeneity', 'energy', 'correlation'],
-        'symmetric'  : True,
-        'normed'     : True,
-    },
-    'metadata': {
-        'scenario'   : '16-mean',
-        'acc_test'   : 0.4231,
-        'acc_train'  : 0.4517,
-        'classes'    : ['angry', 'happy', 'sad', 'surprise'],
-        'n_features' : 4,
-        'exported_at': '2025-...',
-    }
-}
-```
-
----
-
-## Deploy ke Streamlit Cloud
-
-1. Push folder `streamlit_app/` ke GitHub (termasuk `model_bundle.pkl`)
-2. Buka [share.streamlit.io](https://share.streamlit.io)
-3. Hubungkan repo → set **Main file path**: `streamlit_app/app.py`
-4. Deploy!
-
-> **Catatan:** Jika `model_bundle.pkl` terlalu besar (>100 MB), gunakan Git LFS  
-> atau simpan di Google Drive dan load dengan `gdown`.
+*(Eksperimen menggunakan ekstraksi fitur Geometri dan pemodelan SVM tidak di-deploy ke Streamlit, namun dieksplorasi secara terpisah di dalam notebook `main.ipynb`).*
 
 ---
 
 ## Troubleshooting
 
-| Error | Penyebab | Solusi |
-|:------|:---------|:-------|
-| `model_bundle.pkl not found` | File belum digenerate | Jalankan CELL 6.0 di notebook |
-| `ValueError: X has N features` | Scaler tidak cocok | Pastikan pakai bundle dari notebook yang sama |
-| Prediksi selalu salah | Preprocessing berbeda | Cek level kuantisasi dan agregasi di bundle |
-| `ModuleNotFoundError: skimage` | scikit-image belum install | `pip install scikit-image` |
+| Error / Kendala | Kemungkinan Penyebab | Solusi |
+| --- | --- | --- |
+| `model_bundle.pkl not found` | File model belum ada atau salah lokasi | Pastikan file model hasil *export* berada dalam satu folder yang sama dengan `app.py` di dalam folder `streamlit_app`. |
+| `ValueError: X has N features` | Terdapat ketidakcocokan *scaler* atau jumlah fitur | Gunakan *bundle* `.pkl` yang dihasilkan dari *notebook* yang sama dengan konfigurasi pipeline (misal: skenario 8-concat, 16D). |
+| `ModuleNotFoundError: skimage` | Library `scikit-image` belum terinstal | Jalankan `pip install scikit-image` di *environment* Anda. |
