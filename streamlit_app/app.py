@@ -520,8 +520,7 @@ with st.sidebar:
 # ════════════════════════════════════════════════════════════════
 st.markdown("# Raut Muka - Klasifikasi Emosi Wajah")
 st.markdown(
-    "Upload foto wajah · sistem mengekstrak fitur **GLCM** (tekstur) "
-    "+ **Geometri Wajah** · model memprediksi emosi."
+    "Upload foto wajah -> sistem mengekstrak fitur -> model memprediksi emosi."
 )
 
 # ── Kartu ringkasan 3 model ────────────────────────────────────
